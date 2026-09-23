@@ -1,3 +1,8 @@
 ---
 restart_mode: always
 service_type: simple
+
+# Where `env` is written when it is supplied. /etc/default is the Debian
+# convention for service environment; the file is 0600 and owned by `user`,
+# unlike the 0644 unit file that systemd needs to read.
+environment_file: /etc/default/{{ service }}

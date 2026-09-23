@@ -12,9 +12,9 @@ Group={{ group }}
 {% if working_directory is defined %}
 WorkingDirectory={{ working_directory }}
 {% endif %}
-{% for key, value in env|dictsort %}
-Environment="{{ key }}={{ value|replace('\\', '\\x5c')|replace('"', '\\x22')|replace('%', '%%') }}"
-{% endfor %}
+{% if env is defined %}
+EnvironmentFile={{ environment_file }}
+{% endif %}
 ExecStart={{ command }}
 {% if exec_stop is defined %}
 ExecStop={{ exec_stop }}
