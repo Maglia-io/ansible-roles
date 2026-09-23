@@ -1,4 +1,19 @@
 ---
+# The unit file has to stay world-readable, so anything secret in `env` goes to
+# a file only the service user can read. Inlining it as Environment= published
+# database passwords and token secrets to every other user on the host.
+- name: Configure environment for {{ service }}
+  template:
+    src: environment.j2
+    dest: '{{ environment_file }}'
+    owner: '{{ user }}'
+    group: '{{ group }}'
+    mode: 0600
+  when: env is defined
+  no_log: true
+  notify:
+    - restart service {{ service }}
+
 - name: Configure service {{ service }}
   template:
     src: service.service.j2

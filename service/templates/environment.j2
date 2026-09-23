@@ -1,0 +1,11 @@
+# Managed by ansible -- role `service`. Do not edit.
+#
+# systemd reads this as root, before it drops to User=, so 0600 is enough to
+# keep the values away from the other services sharing this host.
+#
+# `tojson` emits a double-quoted string with the quote and backslash escapes
+# systemd accepts inside quotes. Unlike Environment= in the unit file, `%` is
+# not a specifier here, so it needs no doubling.
+{% for key, value in env|dictsort %}
+{{ key }}={{ value|tojson }}
+{% endfor %}

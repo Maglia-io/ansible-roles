@@ -1,0 +1,4 @@
+# Templates are rendered byte for byte onto managed hosts. A CRLF checkout on
+# the control node puts a carriage return at the end of every rendered line --
+# which, for an EnvironmentFile, lands inside the value systemd exports.
+* text=auto eol=lf
