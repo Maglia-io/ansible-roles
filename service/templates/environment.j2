@@ -3,9 +3,14 @@
 # systemd reads this as root, before it drops to User=, so 0600 is enough to
 # keep the values away from the other services sharing this host.
 #
-# `tojson` emits a double-quoted string with the quote and backslash escapes
-# systemd accepts inside quotes. Unlike Environment= in the unit file, `%` is
-# not a specifier here, so it needs no doubling.
+# Inside double quotes systemd unescapes exactly one set of characters --
+# SHELL_NEED_ESCAPE in src/basic/escape.h, which is " \ ` $ -- and for
+# anything else it keeps the backslash where it stands, like a real shell
+# does (src/basic/env-file.c, DOUBLE_QUOTE_VALUE_ESCAPE). So only those may
+# be escaped: emitting any other escape, such as the \uXXXX that Jinja's
+# html-safe `tojson` produces for & < > ' and non-ASCII, stores the escape
+# itself in the value. Everything else, `%` included, passes through as is:
+# `%` is a specifier for Environment= in the unit file, not here.
 {% for key, value in env|dictsort %}
-{{ key }}={{ value|tojson }}
+{{ key }}="{{ value|replace('\\', '\\\\')|replace('"', '\\"') }}"
 {% endfor %}
