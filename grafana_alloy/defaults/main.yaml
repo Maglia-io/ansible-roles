@@ -1,0 +1,4 @@
+---
+grafana_alloy_enabled: false
+grafana_alloy_config_path: /etc/alloy/config.alloy
+grafana_alloy_scrape_interval: 60s
