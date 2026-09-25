@@ -1,0 +1,73 @@
+---
+- name: Require Grafana Cloud connection settings
+  assert:
+    that:
+      - grafana_cloud_prometheus_url | length > 0
+      - grafana_cloud_prometheus_username | length > 0
+      - grafana_cloud_loki_url | length > 0
+      - grafana_cloud_loki_username | length > 0
+      - grafana_cloud_api_token | length > 0
+      - grafana_cloud_api_token != 'CHANGE_ME'
+      - grafana_cloud_prometheus_username != 'CHANGE_ME'
+      - grafana_cloud_loki_username != 'CHANGE_ME'
+    fail_msg: >-
+      Grafana Alloy is enabled but Cloud credentials are missing or still
+      CHANGE_ME. Encrypt real values into group_vars (see ansible/README.md).
+
+- name: Install APT HTTPS helpers
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - gpg
+    update_cache: true
+
+- name: Ensure APT keyrings directory exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Download Grafana APT signing key
+  get_url:
+    url: https://apt.grafana.com/gpg-full.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+
+- name: Add Grafana APT repository
+  apt_repository:
+    repo: deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
+    filename: grafana
+    state: present
+    update_cache: true
+
+- name: Install Grafana Alloy
+  apt:
+    name: alloy
+    state: present
+  notify: restart alloy
+
+- name: Allow Alloy to read the systemd journal
+  user:
+    name: alloy
+    groups:
+      - adm
+      - systemd-journal
+    append: true
+  notify: restart alloy
+
+- name: Deploy Alloy configuration
+  template:
+    src: config.alloy.j2
+    dest: "{{ grafana_alloy_config_path }}"
+    owner: alloy
+    group: alloy
+    mode: "0640"
+  notify: restart alloy
+
+- name: Enable and start Alloy
+  systemd:
+    name: alloy
+    state: started
+    enabled: true
+    daemon_reload: true

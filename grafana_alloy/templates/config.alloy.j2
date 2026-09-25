@@ -1,0 +1,195 @@
+prometheus.exporter.self "alloy_check" { }
+
+discovery.relabel "alloy_check" {
+  targets = prometheus.exporter.self.alloy_check.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    target_label = "alloy_hostname"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "integrations/alloy-check"
+  }
+}
+
+prometheus.scrape "alloy_check" {
+  targets         = discovery.relabel.alloy_check.output
+  forward_to      = [prometheus.relabel.alloy_check.receiver]
+  scrape_interval = {{ grafana_alloy_scrape_interval | to_json }}
+}
+
+prometheus.relabel "alloy_check" {
+  forward_to = [prometheus.remote_write.metrics_service.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "(prometheus_target_sync_length_seconds_sum|prometheus_target_scrapes_.*|prometheus_target_interval.*|prometheus_sd_discovered_targets|alloy_build.*|prometheus_remote_write_wal_samples_appended_total|process_start_time_seconds)"
+    action        = "keep"
+  }
+}
+
+prometheus.remote_write "metrics_service" {
+  endpoint {
+    url = {{ grafana_cloud_prometheus_url | to_json }}
+
+    basic_auth {
+      username = {{ grafana_cloud_prometheus_username | to_json }}
+      password = {{ grafana_cloud_api_token | to_json }}
+    }
+  }
+
+  external_labels = {
+    environment = {{ environment_name | to_json }},
+  }
+}
+
+loki.write "grafana_cloud_loki" {
+  endpoint {
+    url = {{ grafana_cloud_loki_url | to_json }}
+
+    basic_auth {
+      username = {{ grafana_cloud_loki_username | to_json }}
+      password = {{ grafana_cloud_api_token | to_json }}
+    }
+  }
+}
+
+discovery.relabel "integrations_node_exporter" {
+  targets = prometheus.exporter.unix.integrations_node_exporter.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "integrations/node_exporter"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement  = {{ environment_name | to_json }}
+  }
+}
+
+prometheus.exporter.unix "integrations_node_exporter" {
+  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+
+  filesystem {
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+    mount_timeout        = "5s"
+  }
+
+  netclass {
+    ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+
+  netdev {
+    device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+  }
+}
+
+prometheus.scrape "integrations_node_exporter" {
+  targets         = discovery.relabel.integrations_node_exporter.output
+  forward_to      = [prometheus.relabel.integrations_node_exporter.receiver]
+  scrape_interval = {{ grafana_alloy_scrape_interval | to_json }}
+}
+
+prometheus.relabel "integrations_node_exporter" {
+  forward_to = [prometheus.remote_write.metrics_service.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "node_scrape_collector_.+"
+    action        = "drop"
+  }
+}
+
+loki.source.journal "logs_integrations_integrations_node_exporter_journal_scrape" {
+  max_age       = "24h0m0s"
+  relabel_rules = discovery.relabel.logs_integrations_integrations_node_exporter_journal_scrape.rules
+  forward_to    = [loki.write.grafana_cloud_loki.receiver]
+  labels = {
+    environment = {{ environment_name | to_json }},
+  }
+}
+
+local.file_match "logs_integrations_integrations_node_exporter_direct_scrape" {
+  path_targets = [{
+    __address__ = "localhost",
+    __path__    = "/var/log/{syslog,messages,*.log}",
+    instance    = constants.hostname,
+    job         = "integrations/node_exporter",
+    environment = {{ environment_name | to_json }},
+  }]
+}
+
+discovery.relabel "logs_integrations_integrations_node_exporter_journal_scrape" {
+  targets = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal__boot_id"]
+    target_label  = "boot_id"
+  }
+
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+loki.source.file "logs_integrations_integrations_node_exporter_direct_scrape" {
+  targets    = local.file_match.logs_integrations_integrations_node_exporter_direct_scrape.targets
+  forward_to = [loki.write.grafana_cloud_loki.receiver]
+}
+
+// nginx access and error logs.
+//
+// Not reachable from the node_exporter file match above: that one globs
+// /var/log/{syslog,messages,*.log}, and nginx writes one directory down, so
+// its logs were silently absent.
+//
+// Readable because the role adds `alloy` to the `adm` group (it needs that for
+// the journal anyway): Debian's logrotate creates these as root:adm 0640, so
+// group membership is exactly what grants it. Without `adm` this block would
+// produce permission errors rather than logs.
+//
+// The glob deliberately matches only *.log, so rotated .log.1 and .gz files are
+// not re-ingested on every rotation.
+//
+// One nginx serves every application on the box, so these belong with the
+// host's logs rather than any single app's — which is the same reason this whole
+// role is installed once per host.
+local.file_match "logs_nginx" {
+  path_targets = [{
+    __address__ = "localhost",
+    __path__    = "/var/log/nginx/*.log",
+    instance    = constants.hostname,
+    job         = "integrations/nginx",
+    environment = {{ environment_name | to_json }},
+  }]
+}
+
+loki.source.file "logs_nginx" {
+  targets    = local.file_match.logs_nginx.targets
+  forward_to = [loki.write.grafana_cloud_loki.receiver]
+}
